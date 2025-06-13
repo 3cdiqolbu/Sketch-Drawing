@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Karya Sketsa Web</title>
+    <!-- Tailwind CSS CDN untuk styling yang cepat dan responsif -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            overflow: hidden; /* Mencegah scrolling */
+        }
+        canvas {
+            touch-action: none; /* Mencegah tindakan default browser pada sentuhan */
+        }
+        /* Mengatur kursor menjadi crosshair saat menggambar */
+        .drawing-cursor {
+            cursor: crosshair;
+        }
+        /* Styling untuk color input yang lebih baik (opsional, karena browser bawaan sudah cukup baik) */
+        input[type="color"] {
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            appearance: none;
+            border: none;
+            width: 32px; /* Sesuaikan ukuran */
+            height: 32px; /* Sesuaikan ukuran */
+            background-color: transparent;
+            cursor: pointer;
+            border-radius: 8px; /* Sudut membulat */
+            overflow: hidden; /* Memastikan warna pas di dalam border-radius */
+        }
+        input[type="color"]::-webkit-color-swatch-wrapper {
+            padding: 0;
+        }
+        input[type="color"]::-webkit-color-swatch {
+            border: none;
+        }
+        input[type="color"]::-moz-color-swatch-wrapper {
+            padding: 0;
+        }
+        input[type="color"]::-moz-color-swatch {
+            border: none;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex flex-col items-center justify-center p-4">
+
+    <!-- Kontainer utama aplikasi -->
+    <div class="bg-white shadow-lg rounded-xl overflow-hidden flex flex-col w-full max-w-4xl h-[90vh] md:h-[80vh]">
+
+        <!-- Toolbar atas dengan warna oranye -->
+        <div class="bg-orange-500 p-4 flex flex-wrap items-center justify-between gap-4 shadow-md rounded-t-xl">
+            <!-- Bagian kiri: Undo, Redo, Clear All -->
+            <div class="flex items-center space-x-2">
+                <button id="undoBtn" class="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white font-semibold rounded-lg shadow-md transition duration-200 ease-in-out transform hover:scale-105">
+                    Undo
+                </button>
+                <button id="redoBtn" class="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white font-semibold rounded-lg shadow-md transition duration-200 ease-in-out transform hover:scale-105">
+                    Redo
+                </button>
+                <button id="clearBtn" class="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white font-semibold rounded-lg shadow-md transition duration-200 ease-in-out transform hover:scale-105">
+                    Bersihkan
+                </button>
+            </div>
+
+            <!-- Bagian tengah: Mode Menggambar, Warna, Ukuran Kuas, Isi Bentuk -->
+            <div class="flex flex-wrap items-center space-x-4">
+                <!-- Pilihan Mode Menggambar -->
+                <label for="drawMode" class="text-white font-medium">Mode:</label>
+                <select id="drawMode" class="p-2 rounded-lg bg-orange-400 text-white border-none focus:ring-2 focus:ring-white focus:outline-none transition duration-200 ease-in-out">
+                    <option value="point">Titik</option>
+                    <option value="freehand">Titik Bersambung</option>
+                    <option value="line">Garis</option>
+                    <option value="rectangle">Persegi</option>
+                    <option value="circle">Lingkaran</option>
+                    <option value="ellipse">Elips</option>
+                    <option value="eraser">Penghapus</option>
+                </select>
+
+                <!-- Pemilihan Warna -->
+                <label for="colorPicker" class="text-white font-medium">Warna:</label>
+                <input type="color" id="colorPicker" value="#000000" class="rounded-lg shadow-inner border border-orange-700">
+
+                <!-- Ukuran Kuas -->
+                <label for="brushSize" class="text-white font-medium">Ukuran:</label>
+                <input type="range" id="brushSize" min="1" max="50" value="5" class="w-24">
+                <span id="brushSizeValue" class="text-white font-semibold text-sm">5</span>
+
+                <!-- Checkbox Isi Bentuk -->
+                <label class="flex items-center space-x-2 text-white font-medium cursor-pointer">
+                    <input type="checkbox" id="fillShape" class="form-checkbox h-5 w-5 text-orange-600 rounded">
+                    <span>Isi Bentuk</span>
+                </label>
+            </div>
+        </div>
+
+        <!-- Kanvas Gambar -->
+        <div class="flex-grow flex items-center justify-center p-2">
+            <canvas id="drawingCanvas" class="bg-white border-2 border-gray-300 rounded-lg shadow-inner w-full h-full drawing-cursor"></canvas>
+        </div>
+    </div>
+
+    <script>
+        // Mendapatkan elemen canvas dan konteks 2D
+        const canvas = document.getElementById('drawingCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Mendapatkan elemen-elemen kontrol UI
+        const drawModeSelect = document.getElementById('drawMode');
+        const colorPicker = document.getElementById('colorPicker');
+        const brushSizeSlider = document.getElementById('brushSize');
+        const brushSizeValueSpan = document.getElementById('brushSizeValue');
+        const fillShapeCheckbox = document.getElementById('fillShape');
+        const undoBtn = document.getElementById('undoBtn');
+        const redoBtn = document.getElementById('redoBtn');
+        const clearBtn = document.getElementById('clearBtn');
+
+        // Variabel Status Menggambar
+        let currentMode = 'point'; // Mode gambar default
+        let isDrawing = false;
+        let lastX = 0;
+        let lastY = 0;
+        let startX = 0;
+        let startY = 0;
+        let drawingHistory = []; // Untuk menyimpan riwayat gambar
+        let historyIndex = -1; // Indeks riwayat saat ini
+
+        // Mengatur ukuran kanvas agar responsif
+        function resizeCanvas() {
+            canvas.width = canvas.offsetWidth;
+            canvas.height = canvas.offsetHeight;
+            redrawAllShapes(); // Gambar ulang semua bentuk setelah perubahan ukuran
+        }
+
+        // Fungsi untuk menambahkan aksi ke riwayat
+        function addDrawingAction(action) {
+            // Hapus semua aksi 'undo' yang ada jika aksi baru ditambahkan
+            if (historyIndex < drawingHistory.length - 1) {
+                drawingHistory = drawingHistory.slice(0, historyIndex + 1);
+            }
+            drawingHistory.push(action);
+            historyIndex = drawingHistory.length - 1;
+        }
+
+        // Fungsi untuk menggambar ulang semua bentuk dari riwayat
+        function redrawAllShapes() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height); // Bersihkan seluruh kanvas
+            drawingHistory.forEach(action => {
+                drawShape(action.mode, action.startX, action.startY, action.endX, action.endY, action.color, action.size, action.fill, action.coords);
+            });
+        }
+
+        // Fungsi bantu untuk menggambar bentuk
+        function drawShape(mode, sx, sy, ex, ey, color, size, fill, coords = null) {
+            ctx.strokeStyle = color;
+            ctx.fillStyle = color;
+            ctx.lineWidth = size;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+
+            ctx.beginPath();
+            if (mode === 'point' || mode === 'freehand' || mode === 'eraser') {
+                if (coords) { // Untuk titik bersambung dan penghapus dari riwayat
+                    ctx.arc(coords.x, coords.y, size / 2, 0, Math.PI * 2);
+                    if (mode === 'eraser') {
+                        ctx.fillStyle = 'white'; // Penghapus menggambar dengan warna latar belakang
+                        ctx.fill();
+                    } else {
+                        ctx.fill();
+                    }
+                } else { // Untuk titik tunggal (saat klik)
+                    ctx.arc(sx, sy, size / 2, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            } else if (mode === 'line') {
+                ctx.moveTo(sx, sy);
+                ctx.lineTo(ex, ey);
+                ctx.stroke();
+            } else if (mode === 'rectangle') {
+                const width = ex - sx;
+                const height = ey - sy;
+                if (fill) {
+                    ctx.fillRect(sx, sy, width, height);
+                } else {
+                    ctx.strokeRect(sx, sy, width, height);
+                }
+            } else if (mode === 'circle') {
+                const radius = Math.sqrt((ex - sx) ** 2 + (ey - sy) ** 2) / 2;
+                const centerX = sx + (ex - sx) / 2;
+                const centerY = sy + (ey - sy) / 2;
+                ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+                if (fill) {
+                    ctx.fill();
+                } else {
+                    ctx.stroke();
+                }
+            } else if (mode === 'ellipse') {
+                const centerX = sx + (ex - sx) / 2;
+                const centerY = sy + (ey - sy) / 2;
+                const radiusX = Math.abs(ex - sx) / 2;
+                const radiusY = Math.abs(ey - sy) / 2;
+                ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2);
+                if (fill) {
+                    ctx.fill();
+                } else {
+                    ctx.stroke();
+                }
+            }
+            ctx.closePath();
+        }
+
+        // Fungsi untuk menggambar preview sementara (untuk garis, persegi, lingkaran, elips)
+        function drawPreview(mode, sx, sy, ex, ey) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height); // Bersihkan kanvas untuk preview
+            redrawAllShapes(); // Gambar ulang semua bentuk yang sudah ada
+            
+            const color = colorPicker.value;
+            const size = brushSizeSlider.value;
+            const fill = fillShapeCheckbox.checked;
+
+            drawShape(mode, sx, sy, ex, ey, color, size, fill);
+        }
+
+        // --- Event Handlers ---
+
+        // Saat mouse ditekan
+        canvas.addEventListener('mousedown', (e) => {
+            isDrawing = true;
+            [lastX, lastY] = [e.offsetX, e.offsetY];
+            [startX, startY] = [e.offsetX, e.offsetY];
+
+            if (currentMode === 'point') {
+                const action = {
+                    mode: currentMode,
+                    startX: startX,
+                    startY: startY,
+                    endX: startX,
+                    endY: startY,
+                    color: colorPicker.value,
+                    size: brushSizeSlider.value,
+                    fill: fillShapeCheckbox.checked
+                };
+                drawShape(action.mode, action.startX, action.startY, action.endX, action.endY, action.color, action.size, action.fill);
+                addDrawingAction(action);
+            } else if (currentMode === 'freehand' || currentMode === 'eraser') {
+                // Untuk freehand/penghapus, kita mulai menggambar saat mousedown
+                const action = {
+                    mode: currentMode,
+                    color: colorPicker.value,
+                    size: brushSizeSlider.value,
+                    fill: false, // Freehand/eraser tidak diisi
+                    coords: { x: startX, y: startY }
+                };
+                drawShape(action.mode, action.startX, action.startY, action.endX, action.endY, action.color, action.size, action.fill, action.coords);
+                addDrawingAction(action);
+            }
+        });
+
+        // Saat mouse digeser
+        canvas.addEventListener('mousemove', (e) => {
+            if (!isDrawing) return;
+
+            if (currentMode === 'freehand' || currentMode === 'eraser') {
+                const action = {
+                    mode: currentMode,
+                    color: colorPicker.value,
+                    size: brushSizeSlider.value,
+                    fill: false,
+                    coords: { x: e.offsetX, y: e.offsetY }
+                };
+                drawShape(action.mode, action.startX, action.startY, action.endX, action.endY, action.color, action.size, action.fill, action.coords);
+                addDrawingAction(action);
+                [lastX, lastY] = [e.offsetX, e.offsetY];
+            } else {
+                // Untuk bentuk lain, tampilkan preview saat digeser
+                drawPreview(currentMode, startX, startY, e.offsetX, e.offsetY);
+            }
+        });
+
+        // Saat mouse dilepas
+        canvas.addEventListener('mouseup', (e) => {
+            if (!isDrawing) return;
+            isDrawing = false;
+
+            if (currentMode !== 'point' && currentMode !== 'freehand' && currentMode !== 'eraser') {
+                const action = {
+                    mode: currentMode,
+                    startX: startX,
+                    startY: startY,
+                    endX: e.offsetX,
+                    endY: e.offsetY,
+                    color: colorPicker.value,
+                    size: brushSizeSlider.value,
+                    fill: fillShapeCheckbox.checked
+                };
+                addDrawingAction(action);
+                redrawAllShapes(); // Gambar ulang semua bentuk, termasuk yang baru saja selesai
+            }
+        });
+
+        // Saat mouse keluar dari kanvas
+        canvas.addEventListener('mouseout', () => {
+            // Jika sedang menggambar bentuk yang butuh drag (line, rect, circle, ellipse),
+            // dan mouse keluar saat drag, batalkan gambar tersebut.
+            if (isDrawing && currentMode !== 'point' && currentMode !== 'freehand' && currentMode !== 'eraser') {
+                redrawAllShapes(); // Hapus preview yang belum selesai
+            }
+            isDrawing = false;
+        });
+
+        // Event listener untuk perubahan mode
+        drawModeSelect.addEventListener('change', (e) => {
+            currentMode = e.target.value;
+            // Ubah kursor berdasarkan mode
+            if (currentMode === 'eraser') {
+                canvas.classList.remove('drawing-cursor');
+                canvas.style.cursor = 'url("data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'24\' height=\'24\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'2\' stroke-linecap=\'round\' stroke-linejoin=\'round\' class=\'lucide lucide-eraser\'><path d=\'m18.4 7.6-4.8 4.8\'/><path d=\'m21.2 10.4-4.8-4.8c-1.121-1.121-2.612-1.681-4.103-1.681s-2.982.56-4.103 1.681l-3.2 3.2c-1.045 1.045-1.571 2.433-1.571 3.824 0 1.391.526 2.78 1.571 3.824l7.2 7.2c1.045 1.045 2.433 1.571 3.824 1.571 1.391 0 2.78-.526 3.824-1.571l3.2-3.2c1.121-1.121 1.681-2.612 1.681-4.103s-.56-2.982-1.681-4.103Z\'/><path d=\'m16 8 2-2\'/><path d=\'m2.3 22.7 7.5-7.5\'/><path d=\'m12.4 10.8 1.6 1.6\'/></svg>") 12 12, auto'; /* Kursor penghapus */
+            } else {
+                canvas.classList.add('drawing-cursor');
+                canvas.style.cursor = ''; /* Kembali ke default crosshair */
+            }
+        });
+
+        // Event listener untuk perubahan warna
+        colorPicker.addEventListener('input', () => {
+            // Warna akan digunakan otomatis saat menggambar
+        });
+
+        // Event listener untuk perubahan ukuran kuas
+        brushSizeSlider.addEventListener('input', (e) => {
+            brushSizeValueSpan.textContent = e.target.value;
+        });
+
+        // Event listener untuk Undo
+        undoBtn.addEventListener('click', () => {
+            if (historyIndex >= 0) {
+                historyIndex--;
+                redrawAllShapes();
+            }
+        });
+
+        // Event listener untuk Redo
+        redoBtn.addEventListener('click', () => {
+            if (historyIndex < drawingHistory.length - 1) {
+                historyIndex++;
+                redrawAllShapes();
+            }
+        });
+
+        // Event listener untuk Bersihkan Kanvas
+        clearBtn.addEventListener('click', () => {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawingHistory = [];
+            historyIndex = -1;
+        });
+
+        // Inisialisasi: panggil resizeCanvas saat pertama kali dimuat dan saat jendela diubah ukurannya
+        window.addEventListener('load', resizeCanvas);
+        window.addEventListener('resize', resizeCanvas);
+
+        // Panggil resizeCanvas segera setelah script dimuat untuk memastikan ukuran awal yang benar
+        resizeCanvas();
+
+    </script>
+</body>
+</html>
